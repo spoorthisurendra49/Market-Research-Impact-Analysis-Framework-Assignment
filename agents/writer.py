@@ -1,41 +1,97 @@
+from mcp_server.server import log
+import time
+
+
+def _normalize_to_string(value):
+    """
+    Converts LLM outputs (str | dict | other) into safe strings
+    so they can be stored in sets and sorted.
+    """
+    if isinstance(value, str):
+        return value.strip()
+
+    if isinstance(value, dict):
+        # Try common keys first
+        for k in ["name", "risk", "opportunity", "theme"]:
+            if k in value and isinstance(value[k], str):
+                return value[k].strip()
+        return str(value)
+
+    return str(value)
+
+
 def writer_agent(state: dict, tools: dict):
-    impacts = state.get("impacts", [])[:10]
+    start = time.time()
+    log("Writer", "START")
+
+    industry = state.get("industry", "Unknown")
+    extracted = state.get("extracted", [])
+    impacts = state.get("impacts", [])
 
     competitors = set()
-    for item in state.get("extracted", []):
-        ent = item.get("entities", {})
-        if isinstance(ent, dict):
-            for c in ent.get("competitors", []):
-                competitors.add(c)
+    risks = set()
+    opportunities = set()
+    themes = set()
+    sources = set()
 
-    industry = state.get("industry", "Target")
+    # --------------------------------------------------
+    # Aggregate extracted entities SAFELY
+    # --------------------------------------------------
+    for item in extracted:
+        entities = item.get("entities", {}) or {}
+
+        for c in entities.get("competitors", []):
+            competitors.add(_normalize_to_string(c))
+
+        for r in entities.get("risks", []):
+            risks.add(_normalize_to_string(r))
+
+        for o in entities.get("opportunities", []):
+            opportunities.add(_normalize_to_string(o))
+
+        for t in entities.get("themes", []):
+            themes.add(_normalize_to_string(t))
+
+        url = item.get("url")
+        if isinstance(url, str):
+            sources.add(url)
+
+    # --------------------------------------------------
+    # FINAL SAFETY FALLBACK (NO CRASH)
+    # --------------------------------------------------
+    if not (competitors or risks or opportunities or themes):
+        log("Writer", "No strong signals — using minimal fallback")
+        themes.add("Limited publicly available data for the selected period")
 
     report = {
-        "summary": f"Market intelligence report for {industry} industry.",
-        "drivers": ["Regulatory change", "Digital adoption", "Competitive pressure"],
-        "competitors": list(competitors)[:5],
+        "summary": (
+            f"This report is generated from verified online sources "
+            f"and analyzes the current {industry} industry landscape."
+        ),
+        "drivers": sorted(themes),
+        "competitors": (
+    sorted(competitors)
+    if competitors
+    else ["Not identified in analyzed sources"]
+),
         "impact_radar": impacts,
-        "opportunities": [
-            "Digital lending expansion",
-            "Compliance automation",
-            "New market segments",
-            "Strategic partnerships",
-            "Product diversification"
-        ],
-        "risks": [
-    "RBI regulatory tightening",
-    "Higher compliance costs",
-    "Frequent policy changes",
-    "Audit and reporting burden",
-    "Penalty risk for non-compliance"
-],
-
-        "90_day_plan": {
-            "0_30": ["Compliance audit", "Risk assessment"],
-            "30_60": ["Process optimization", "Technology upgrade"],
-            "60_90": ["Automation rollout", "Performance review"]
-        },
-        "sources": [i["url"] for i in impacts if "url" in i]
+        "opportunities": sorted(opportunities),
+        "risks": sorted(risks),
+        "90_day_plan": (
+    {
+        "focus": "Monitor industry developments",
+        "actions": [
+            "Track regulatory and policy updates",
+            "Analyze quarterly sector performance reports",
+            "Identify emerging competitors from future disclosures"
+        ]
     }
+    if impacts
+    else {}
+),
+        "sources": sorted(sources)
+    }
+
+    log("Writer", f"END | {round(time.time() - start, 2)} sec")
 
     return tools["generate_market_report"](report)

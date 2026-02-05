@@ -1,37 +1,38 @@
-import ollama
+from mcp_server.server import log
+import time
+
 
 def impact_agent(state: dict, tools: dict):
+    start = time.time()
+    log("Impact", "START")
+
+    extracted = state.get("extracted", [])
+    industry = state.get("industry", "Unknown")
     impacts = []
 
-    for item in state["extracted"]:
-        prompt = f"""
-        Industry: {state['industry']}
-        Event:
-        {item['text'][:500]}
+    for item in extracted[:3]:
+        try:
+            text = item.get("text", "")
+            if len(text) < 200:
+                continue
 
-        Assign:
-        - Impact Level (High/Medium/Low)
-        - Score (0–100)
-        - 2 reasons
-        - 2 actions
+            impact = tools["impact_score"](
+                {
+                    "event": text[:200],
+                    "url": item.get("url")
+                },
+                context={"industry": industry}
+            )
 
-        Output as JSON.
-        """
+            impacts.append(impact)
 
-        response = ollama.chat(
-            model="llama3",
-            messages=[{"role": "user", "content": prompt}]
-        )
+        except Exception as e:
+            log("Impact", f"Error: {e}")
+            continue
 
-        impact = tools["impact_score"](
-            {
-                "event": item["text"][:120],
-                "url": item["url"],
-                "llm_output": response["message"]["content"]
-            },
-            context={"industry": state["industry"]}
-        )
+    log("Impact", f"END | {round(time.time() - start, 2)} sec")
 
-        impacts.append(impact)
-
-    return {"impacts": impacts}
+    return {
+        **state,
+        "impacts": impacts
+    }
